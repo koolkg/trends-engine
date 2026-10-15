@@ -130,7 +130,7 @@ evergreen or noise) kept in a separate file.
 | Mix | 7 trends, plus noise and duplicates | Mostly noise (~76%) and evergreen talk (~14%); trends ~6%; spam, look-alikes, a bot-amplified giveaway, non-English posts |
 | Replay | 5 posts / 30 s, loops | 500 posts / 30 s (~40 min), one pass |
 | Start with | `make up` | `make reset` then `make up v2` |
-| Regenerate | `make fixtures` | `make fixtures-v2` (starts at midnight UTC yesterday) |
+| Regenerate | `make fixtures` | `make fixtures-v2` (the 5 days up to the current hour) |
 
 The e2e tests always use v1. Dedup is permanent, so to replay a fixture again,
 `make reset` first.

@@ -44,9 +44,16 @@ from datetime import datetime, timedelta, timezone
 
 import post_texts_v2 as T
 
-# Posts start at midnight UTC yesterday (now - 1 day), so a fresh file looks recent.
-# The weekday follows the calendar: the weekend dip lands on whatever days are Sat/Sun.
-START = (datetime.now(timezone.utc) - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+def start_for(days):
+    """The posts run backwards from now: the last hour is the one that just ended
+    (UTC), the first is --days before it. Nothing is ever dated in the future."""
+    end = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    return end - timedelta(hours=int(days * 24))
+
+
+# Set from --days in main(). The day/night rhythm and the weekend dip follow the
+# real clock, so they land on the actual evenings and Saturdays/Sundays.
+START = start_for(5)
 REF_H = 120.0  # trend timings below are written against a 5-day span, then scaled to --days
 
 MIX = {  # share of base posts (before duplicates)
@@ -145,8 +152,8 @@ def diurnal(hour_of_day):
 
 
 def activity(h):
-    weekend = (START + timedelta(hours=h)).weekday() >= 5
-    return diurnal(h % 24) * (0.8 if weekend else 1.0)
+    t = START + timedelta(hours=h)
+    return diurnal(t.hour) * (0.8 if t.weekday() >= 5 else 1.0)
 
 
 def rise(t0, k, floor=0.02):
@@ -573,13 +580,15 @@ def generate(days, per_day, seed):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--days", type=float, default=5, help="span in days (default 5, starting at midnight UTC yesterday)")
+    ap.add_argument("--days", type=float, default=5, help="span in days, ending at the start of the current UTC hour (default 5)")
     ap.add_argument("--per-day", type=int, default=8000, help="base posts per day before duplicates (default 8000)")
     ap.add_argument("--seed", type=int, default=20260907)
     ap.add_argument("--out", default="fixtures/raw_content_v2.jsonl")
     ap.add_argument("--labels", default="fixtures/raw_content_v2.labels.jsonl")
     args = ap.parse_args(argv)
 
+    global START
+    START = start_for(args.days)
     records = generate(args.days, args.per_day, args.seed)
     with open(args.out, "w", encoding="utf-8") as f:
         for rec, *_ in records:

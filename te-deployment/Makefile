@@ -91,7 +91,7 @@ help:
 	@echo "                               TAIL=500 for more history (default 100)"
 	@echo "  make reset                   down AND wipe all data (Postgres, RabbitMQ, Redis)"
 	@echo "Fixtures (te-connector's replay data, generated in a container)"
-	@echo "  make fixtures-v2             regenerate the v2 fixture (5 days from midnight UTC yesterday)"
+	@echo "  make fixtures-v2             regenerate the v2 fixture (the 5 days up to now)"
 	@echo "  make fixtures                regenerate the v1 fixture, then run te-connector's integration tests"
 	@echo "One service ($(SERVICES), or te-infra)"
 	@echo "  make up-<svc> / down-<svc> / restart-<svc> / logs-<svc>"

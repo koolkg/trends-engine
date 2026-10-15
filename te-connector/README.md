@@ -49,8 +49,8 @@ Settings (batch size, interval, looping) come from `../te-deployment/.env`.
   `python:3.12-slim` container); tune with e.g.
   `make fixtures ARGS="--count 3000 --days 7"`.
 - `fixtures/raw_content_v2.jsonl` (+ `.labels.jsonl`) — a realistic-volume
-  replay: ~41,000 posts over 5 days starting at midnight UTC the day before
-  it was generated (so regenerate for fresh dates), 170–530 an
+  replay: ~41,000 posts over the 5 days up to the hour it was generated
+  (regenerate for fresh dates), 170–530 an
   hour with a day/night rhythm. About 76% is everyday noise, 14% evergreen
   marketing talk and 6% planted trends; it also carries traps (lookalike
   words, spam, a bot-amplified giveaway, non-English posts) and exact,
