@@ -1,0 +1,3 @@
+# HTTP server and Redis client are stdlib (http.server, api/redis_client.py);
+# Postgres is the one protocol without a practical stdlib client.
+psycopg2-binary==2.9.9

@@ -1,0 +1,101 @@
+{
+  "rabbit_version": "3.13.0",
+  "exchanges": [
+    {
+      "name": "trends.topic",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "q.normalizer.content-raw-ingested",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "q.detector.content-normalized",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "q.cluster.content-normalized",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "q.aggregator.trend-score-upserted",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "q.aggregator.source-poll-completed",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    }
+  ],
+  "bindings": [
+    {
+      "source": "trends.topic",
+      "vhost": "/",
+      "destination": "q.normalizer.content-raw-ingested",
+      "destination_type": "queue",
+      "routing_key": "content.raw.ingested",
+      "arguments": {}
+    },
+    {
+      "source": "trends.topic",
+      "vhost": "/",
+      "destination": "q.detector.content-normalized",
+      "destination_type": "queue",
+      "routing_key": "content.normalized",
+      "arguments": {}
+    },
+    {
+      "source": "trends.topic",
+      "vhost": "/",
+      "destination": "q.cluster.content-normalized",
+      "destination_type": "queue",
+      "routing_key": "content.normalized",
+      "arguments": {}
+    },
+    {
+      "source": "trends.topic",
+      "vhost": "/",
+      "destination": "q.aggregator.trend-score-upserted",
+      "destination_type": "queue",
+      "routing_key": "trend.score.upserted",
+      "arguments": {}
+    },
+    {
+      "source": "trends.topic",
+      "vhost": "/",
+      "destination": "q.aggregator.source-poll-completed",
+      "destination_type": "queue",
+      "routing_key": "source.poll.completed",
+      "arguments": {}
+    },
+    {
+      "source": "trends.topic",
+      "vhost": "/",
+      "destination": "q.aggregator.trend-score-upserted",
+      "destination_type": "queue",
+      "routing_key": "cluster.score.upserted",
+      "arguments": {}
+    }
+  ]
+}

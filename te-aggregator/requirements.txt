@@ -1,0 +1,4 @@
+# Redis is spoken via aggregator/redis_client.py (stdlib socket), so only the
+# two protocols with no practical stdlib client remain.
+pika==1.3.2
+psycopg2-binary==2.9.9

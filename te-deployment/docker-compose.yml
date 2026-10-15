@@ -1,0 +1,279 @@
+# The whole trends-engine stack as ONE compose project: every container is defined here, each app service builds
+# from its own directory, and everything shares the project's default network,
+# so containers reach each other by service name (postgres, rabbitmq, redis,
+# te-api, ...). Driven by te-deployment/Makefile; each te-*/Makefile points here too.
+#
+# Settings: copy .env.example to .env in this directory to override defaults.
+name: trends-engine
+
+x-db: &db
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: ${POSTGRES_USER:-trends}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trends_dev_pw}
+  POSTGRES_DB: ${POSTGRES_DB:-trends}
+x-mq: &mq
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_USER: ${RABBITMQ_USER:-trends}
+  RABBITMQ_PASS: ${RABBITMQ_PASS:-trends_dev_pw}
+x-cache: &cache
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+x-ready: &infra-ready   # what every app service waits for
+  postgres-migrate: {condition: service_completed_successfully}
+  rabbitmq-init: {condition: service_completed_successfully}
+
+services:
+  # ---------------------------------------------------------------- te-infra
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trends}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trends_dev_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-trends}
+    ports: ["${POSTGRES_PORT:-5432}:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../te-infra/postgres/init/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro  # first init only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trends} -d ${POSTGRES_DB:-trends}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Applies the idempotent migrations (002+) every time the stack starts.
+  postgres-migrate:
+    image: pgvector/pgvector:pg16
+    restart: "no"
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-trends_dev_pw}
+    volumes: ["../te-infra/postgres/init:/migrations:ro"]
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        for f in $$(ls /migrations/0*.sql | grep -v 001_schema.sql | sort); do
+        echo "applying $$f";
+        psql -v ON_ERROR_STOP=1 -h postgres -U ${POSTGRES_USER:-trends} -d ${POSTGRES_DB:-trends} -q -f $$f || exit 1;
+        done
+    depends_on: {postgres: {condition: service_healthy}}
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports: ["${REDIS_PORT:-6379}:6379"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    hostname: te-rabbitmq   # stable node name, so the data volume survives container recreates
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-trends}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-trends_dev_pw}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"   # management UI
+    volumes: [rabbitmqdata:/var/lib/rabbitmq]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Imports exchange/queues/bindings through the management API after boot
+  # (boot-time load_definitions would skip creating the default vhost/user).
+  # Idempotent; runs every time the stack starts.
+  rabbitmq-init:
+    image: curlimages/curl:8.12.1
+    restart: "no"
+    volumes: ["../te-infra/rabbitmq/definitions.json:/definitions.json:ro"]
+    command:
+      - -fsS
+      - --retry
+      - "15"
+      - --retry-delay
+      - "2"
+      - --retry-all-errors
+      - -u
+      - ${RABBITMQ_USER:-trends}:${RABBITMQ_PASS:-trends_dev_pw}
+      - -H
+      - "Content-Type: application/json"
+      - -X
+      - POST
+      - --data
+      - "@/definitions.json"
+      - http://rabbitmq:15672/api/definitions
+    depends_on: {rabbitmq: {condition: service_healthy}}
+
+  mailchimp-fake:   # stand-in for Mailchimp's Marketing API (https://<dc>.api.mailchimp.com/3.0); te-api calls it
+    build: ../te-infra/mailchimp-fake
+    image: te-mailchimp-fake:local
+    restart: unless-stopped
+    environment:
+      MAILCHIMP_FAKE_API_KEY: ${MAILCHIMP_API_KEY:-fake-key-us1}
+      MAILCHIMP_FAKE_PUBLIC_URL: http://localhost:${MAILCHIMP_FAKE_PORT:-8090}   # archive links your browser opens
+    ports: ["${MAILCHIMP_FAKE_PORT:-8090}:8090"]   # http://localhost:8090/3.0 (Basic auth, the key as password)
+
+  # ---------------------------------------------------------- app services
+  te-connector:
+    build: ../te-connector
+    image: te-connector:local
+    restart: unless-stopped
+    environment:
+      <<: *mq
+      CONNECTOR_SOURCE_ID: ${CONNECTOR_SOURCE_ID:-src_tiktok_hashtag}
+      CONNECTOR_FIXTURE_PATH: ${CONNECTOR_FIXTURE_PATH:-fixtures/raw_content.jsonl}
+      CONNECTOR_BATCH_SIZE: ${CONNECTOR_BATCH_SIZE:-5}
+      CONNECTOR_POLL_INTERVAL_SECONDS: ${CONNECTOR_POLL_INTERVAL_SECONDS:-30}
+      CONNECTOR_LOOP_FIXTURE: ${CONNECTOR_LOOP_FIXTURE:-true}
+      CONNECTOR_LOG_MESSAGES: ${CONNECTOR_LOG_MESSAGES:-true}
+    depends_on: *infra-ready
+
+  te-normalizer:
+    build: ../te-normalizer
+    image: te-normalizer:local
+    restart: unless-stopped
+    environment:
+      <<: [*db, *mq]
+      NORMALIZER_RELEVANCE_THRESHOLD: ${NORMALIZER_RELEVANCE_THRESHOLD:-0.5}
+      NORMALIZER_CLASSIFIER: ${NORMALIZER_CLASSIFIER:-model}
+      NORMALIZER_MODEL_SURE: ${NORMALIZER_MODEL_SURE:-0.40}
+      NORMALIZER_MODEL_FLOOR: ${NORMALIZER_MODEL_FLOOR:-0.25}
+      NORMALIZER_MODEL_MARGIN: ${NORMALIZER_MODEL_MARGIN:-0.05}
+      NORMALIZER_PREFETCH: ${NORMALIZER_PREFETCH:-50}
+    depends_on: *infra-ready
+
+  te-detector:
+    build: ../te-detector
+    image: te-detector:local
+    restart: unless-stopped
+    environment:
+      <<: [*db, *mq]
+      DETECTOR_WINDOW_MINUTES: ${DETECTOR_WINDOW_MINUTES:-60}
+      DETECTOR_EWMA_ALPHA: ${DETECTOR_EWMA_ALPHA:-0.3}
+      DETECTOR_Z_THRESHOLD: ${DETECTOR_Z_THRESHOLD:-3.0}
+      DETECTOR_MIN_COUNT: ${DETECTOR_MIN_COUNT:-4}
+      DETECTOR_WARMUP_WINDOWS: ${DETECTOR_WARMUP_WINDOWS:-2}
+      DETECTOR_IDLE_FLUSH_SECONDS: ${DETECTOR_IDLE_FLUSH_SECONDS:-120}
+    depends_on: *infra-ready
+
+  te-cluster:
+    build: ../te-cluster
+    image: te-cluster:local
+    restart: unless-stopped
+    environment:
+      <<: [*db, *mq]
+      CLUSTER_SIMILARITY_THRESHOLD: ${CLUSTER_SIMILARITY_THRESHOLD:-0.72}
+      CLUSTER_EVICT_AFTER_HOURS: ${CLUSTER_EVICT_AFTER_HOURS:-24}
+      CLUSTER_BATCH_SIZE: ${CLUSTER_BATCH_SIZE:-64}
+      CLUSTER_BATCH_WAIT_MS: ${CLUSTER_BATCH_WAIT_MS:-50}
+      CLUSTER_WINDOW_MINUTES: ${CLUSTER_WINDOW_MINUTES:-60}
+      CLUSTER_EWMA_ALPHA: ${CLUSTER_EWMA_ALPHA:-0.3}
+      CLUSTER_Z_THRESHOLD: ${CLUSTER_Z_THRESHOLD:-3.0}
+      CLUSTER_MIN_COUNT: ${CLUSTER_MIN_COUNT:-4}
+      CLUSTER_WARMUP_WINDOWS: ${CLUSTER_WARMUP_WINDOWS:-2}
+      CLUSTER_IDLE_FLUSH_SECONDS: ${CLUSTER_IDLE_FLUSH_SECONDS:-120}
+    depends_on: *infra-ready
+
+  te-aggregator:
+    build: ../te-aggregator
+    image: te-aggregator:local
+    restart: unless-stopped
+    environment:
+      <<: [*db, *mq, *cache]
+      AGGREGATOR_FALLBACK_SECONDS: ${AGGREGATOR_FALLBACK_SECONDS:-300}
+      AGGREGATOR_DEBOUNCE_SECONDS: ${AGGREGATOR_DEBOUNCE_SECONDS:-20}
+      AGGREGATOR_MAX_WAIT_SECONDS: ${AGGREGATOR_MAX_WAIT_SECONDS:-90}
+      AGGREGATOR_TOP_N: ${AGGREGATOR_TOP_N:-10}
+      AGGREGATOR_LOOKBACK_HOURS: ${AGGREGATOR_LOOKBACK_HOURS:-6}
+      AGGREGATOR_SPARKLINE_HOURS: ${AGGREGATOR_SPARKLINE_HOURS:-12}
+      AGGREGATOR_DECAY_PER_HOUR: ${AGGREGATOR_DECAY_PER_HOUR:-0.8}
+      AGGREGATOR_MIN_Z: ${AGGREGATOR_MIN_Z:-1.0}
+      AGGREGATOR_SPIKE_Z: ${AGGREGATOR_SPIKE_Z:-3.0}
+      AGGREGATOR_CACHE_TTL_SECONDS: ${AGGREGATOR_CACHE_TTL_SECONDS:-3600}
+    depends_on:
+      <<: *infra-ready
+      redis: {condition: service_healthy}
+
+  te-api:
+    build: ../te-api
+    image: te-api:local
+    restart: unless-stopped
+    environment:
+      <<: [*db, *cache]
+      API_DEFAULT_LIMIT: ${API_DEFAULT_LIMIT:-20}
+      API_MAX_LIMIT: ${API_MAX_LIMIT:-100}
+      API_CACHE_TTL_SECONDS: ${API_CACHE_TTL_SECONDS:-3600}
+      MAILCHIMP_API_URL: ${MAILCHIMP_API_URL:-http://mailchimp-fake:8090/3.0}
+      MAILCHIMP_API_KEY: ${MAILCHIMP_API_KEY:-fake-key-us1}
+      MAILCHIMP_FROM_NAME: ${MAILCHIMP_FROM_NAME:-Trends Engine}
+      MAILCHIMP_REPLY_TO: ${MAILCHIMP_REPLY_TO:-hello@example.com}
+    ports: ["${API_HOST_PORT:-8080}:8080"]   # http://localhost:8080/v1/trends
+    depends_on:
+      postgres-migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      mailchimp-fake: {condition: service_started}   # only for POST /v1/campaigns/draft-block
+
+  te-ui:            # http://localhost:3000  (nginx: the React app + /v1 proxied to te-api)
+    build: ../te-ui
+    image: te-ui:local
+    restart: unless-stopped
+    ports: ["${UI_HOST_PORT:-3000}:80"]
+    depends_on:
+      te-api: {condition: service_started}
+
+  # ------------------------------------------------- on demand (profiles)
+  te-ui-test:       # make test-unit-te-ui  (te-ui's build stage: node + node_modules, Jest + RTL)
+    profiles: ["test"]
+    build: {context: ../te-ui, target: build}
+    image: te-ui-build:local
+    network_mode: none
+    command: ["sh", "-c", "npm run type-check && npm test -- --ci"]
+
+  te-infra-smoke:   # make test-integration-te-infra
+    profiles: ["test"]
+    build: ../te-infra/scripts
+    image: te-infra-smoke:local
+    environment:
+      <<: [*db, *mq, *cache]
+      MAILCHIMP_API_URL: http://mailchimp-fake:8090/3.0
+      MAILCHIMP_API_KEY: ${MAILCHIMP_API_KEY:-fake-key-us1}
+    depends_on:
+      <<: *infra-ready
+      redis: {condition: service_healthy}
+      mailchimp-fake: {condition: service_healthy}
+
+  e2e:              # make e2e  (starts whatever part of the stack isn't running yet)
+    profiles: ["e2e"]
+    build: ../tests/e2e
+    image: te-e2e:local
+    environment:
+      <<: [*db, *mq, *cache]
+      API_URL: http://te-api:8080
+      UI_URL: http://te-ui
+      MAILCHIMP_API_URL: http://mailchimp-fake:8090/3.0
+      MAILCHIMP_API_KEY: ${MAILCHIMP_API_KEY:-fake-key-us1}
+      E2E_PIPELINE_TIMEOUT_SECONDS: ${E2E_PIPELINE_TIMEOUT_SECONDS:-600}
+      E2E_CYCLE_TIMEOUT_SECONDS: ${E2E_CYCLE_TIMEOUT_SECONDS:-150}
+    volumes: ["../te-connector/fixtures:/fixtures:ro"]   # the same fixture te-connector replays
+    depends_on:
+      te-api: {condition: service_healthy}
+      te-ui: {condition: service_healthy}
+      te-normalizer: {condition: service_started}
+      te-detector: {condition: service_started}
+      te-cluster: {condition: service_started}
+      te-aggregator: {condition: service_started}
+
+# Named explicitly so the data te-infra's old compose project created is kept.
+volumes:
+  pgdata: {name: te-infra_pgdata}
+  redisdata: {name: te-infra_redisdata}
+  rabbitmqdata: {name: te-infra_rabbitmqdata}

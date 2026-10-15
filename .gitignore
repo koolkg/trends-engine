@@ -1,0 +1,35 @@
+# --- not part of the shared repo ----------------------------------------------
+# Design notes, decks and working docs (kept locally only)
+te-docs/
+# Per-service working notes
+STATUS.md
+TODO.md
+
+# Generated data: v2 fixture is large and dated from the day it's made.
+# `make fixtures-v2` (or `make up v2`) creates it.
+te-connector/fixtures/raw_content_v2.jsonl
+te-connector/fixtures/raw_content_v2.labels.jsonl
+
+# --- local settings and secrets -----------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- build output, caches, tooling ----------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+node_modules/
+dist/
+coverage/
+*.log
+*.pid
+
+# --- OS / editor ---------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,6 @@
+# te-infra has no application logic of its own — these are only used by
+# scripts/smoke_test.py, and each talks a wire protocol with no
+# reasonable stdlib equivalent (AMQP 0-9-1, the Postgres protocol, RESP).
+pika==1.3.2
+psycopg2-binary==2.9.9
+redis==5.0.8

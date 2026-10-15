@@ -1,0 +1,9 @@
+# The model for relevance + category (decision NORM-9), same as te-cluster;
+# torch is installed separately from the CPU-only index in the Dockerfile.
+sentence-transformers==3.3.1
+numpy>=1.26,<3
+# Everything else is stdlib. These two talk wire protocols with no stdlib
+# client (AMQP 0-9-1, Postgres). Pinned to match te-infra/scripts; both ship
+# prebuilt wheels for the image's Python 3.12, so nothing compiles from source.
+pika==1.3.2
+psycopg2-binary==2.9.9

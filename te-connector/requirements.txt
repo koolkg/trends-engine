@@ -1,0 +1,4 @@
+# stdlib covers everything else here (json, itertools, dataclasses, etc.) —
+# pika is the one unavoidable dependency, since there's no stdlib AMQP
+# 0-9-1 client. Pinned to match te-infra/scripts/requirements.txt.
+pika==1.3.2
